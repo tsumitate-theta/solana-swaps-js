@@ -1,5 +1,5 @@
 {
-  "name": "@apricot-lend/solana-swaps-js",
+  "name": "solana-swaps-js",
   "version": "0.1.13",
   "description": "interface for interacting with DEX/AMMs on solana",
   "main": "dist/index.js",
