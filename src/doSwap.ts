@@ -1,8 +1,8 @@
 // test only works in node
 import * as fs from "fs";
-import { RAYDIUM_BTC_USDC_MARKET, RAYDIUM_ETH_USDC_MARKET, RAYDIUM_mSOL_USDC_MARKET, RAYDIUM_RAY_USDC_MARKET, RAYDIUM_SOL_USDC_MARKET, RAYDIUM_APT_USDC_MARKET, RAYDIUM_SRM_USDC_MARKET } from "./raydium";
-import { ORCA_MNDE_mSOL_MARKET, ORCA_ORCA_USDC_MARKET, ORCA_SBR_USDC_MARKET, ORCA_USDT_USDC_MARKET, ORCA_FTT_USDC_MARKET } from "./orca"
-import { SABER_USTv2_USDC_MARKET } from './saber';
+import { RAYDIUM_BTC_USDC_MARKET, RAYDIUM_ETH_USDC_MARKET, RAYDIUM_mSOL_USDC_MARKET, RAYDIUM_RAY_USDC_MARKET, RAYDIUM_SOL_USDC_MARKET, RAYDIUM_APT_USDC_MARKET, RAYDIUM_SRM_USDC_MARKET, RAYDIUM_MER_USDC_MARKET, RAYDIUM_PORT_USDC_MARKET, RAYDIUM_weWETH_USDC_MARKET } from "./raydium";
+import { ORCA_MNDE_mSOL_MARKET, ORCA_ORCA_USDC_MARKET, ORCA_SBR_USDC_MARKET, ORCA_USDT_USDC_MARKET, ORCA_FTT_USDC_MARKET, ORCA_pSOL_USDC_MARKET } from "./orca"
+import { SABER_PAI_USDC_MARKET, SABER_USTv2_USDC_MARKET } from './saber';
 import { Connection, Keypair, ParsedAccountData, PublicKey, Transaction } from "@solana/web3.js";
 import { Token, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { SwapperType, TokenID } from "./types";
@@ -45,10 +45,16 @@ async function doSwap() {
   const mndeTokenAccount = await getAssociatedTokAcc(TokenID.MNDE, keypair.publicKey);
   const fttTokenAccount = await getAssociatedTokAcc(TokenID.FTT, keypair.publicKey);
   const srmTokenAccount = await getAssociatedTokAcc(TokenID.SRM, keypair.publicKey);
+  const merTokenAccount = await getAssociatedTokAcc(TokenID.MER, keypair.publicKey);
+  const portTokenAccount = await getAssociatedTokAcc(TokenID.PORT, keypair.publicKey);
+  const wewethTokenAccount = await getAssociatedTokAcc(TokenID.weWETH, keypair.publicKey);
+  const paiTokenAccount = await getAssociatedTokAcc(TokenID.PAI, keypair.publicKey);
+  const psolTokenAccount = await getAssociatedTokAcc(TokenID.pSOL, keypair.publicKey);
+  
 
   //const conn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
   // const conn = new Connection("https://lokidfxnwlabdq.main.genesysgo.net:8899/", "confirmed");
-  const conn = new Connection("https://apricot.genesysgo.net/", "confirmed");
+  const conn = new Connection("https://192.168.1.50:10899", "confirmed");
   
   const isBuy = buySell === "buy";
 
@@ -67,6 +73,11 @@ async function doSwap() {
     MNDE: TokenID.MNDE,
     SRM: TokenID.SRM,
     FTT: TokenID.FTT,
+    MER: TokenID.MER,
+    PORT: TokenID.PORT,
+    weWETH: TokenID.weWETH,
+    PAI: TokenID.PAI,
+    pSOL: TokenID.pSOL,
   }[coin];
   invariant(mainTokenType);
 
@@ -85,8 +96,12 @@ async function doSwap() {
     USTv2: ustv2TokenAccount,
     MNDE: mndeTokenAccount,
     SRM: srmTokenAccount,
-    PAI: undefined,
+    PAI: paiTokenAccount,
     FTT: fttTokenAccount,
+    MER: merTokenAccount,
+    PORT: portTokenAccount,
+    weWETH: wewethTokenAccount,
+    pSOL: psolTokenAccount,
   }
   const mainTokenAcc = tokenAccounts[mainTokenType];
   invariant(mainTokenAcc);
@@ -106,6 +121,11 @@ async function doSwap() {
     MNDE: ()=> ORCA_MNDE_mSOL_MARKET,
     FTT: () => ORCA_FTT_USDC_MARKET ,
     SRM: () => RAYDIUM_SRM_USDC_MARKET,
+    MER: () => RAYDIUM_MER_USDC_MARKET,
+    PORT: () => RAYDIUM_PORT_USDC_MARKET,
+    weWETH: () => RAYDIUM_weWETH_USDC_MARKET,
+    PAI: () => SABER_PAI_USDC_MARKET,
+    pSOL: () => ORCA_pSOL_USDC_MARKET,
   }[coin];
   invariant(getSwapper);
   const swapper = getSwapper();
@@ -133,8 +153,15 @@ async function doSwap() {
     MNDE: SwapperType.Single,
     FTT: SwapperType.Single,
     SRM: SwapperType.Single,
+    MER: SwapperType.Single,
+    PORT: SwapperType.Single,
+    weWETH: SwapperType.Single,
+    PAI: SwapperType.Single,
+    pSOL: SwapperType.Single,
   }[coin];
   invariant(swapperType);
+
+  console.log(`sellAmt:${sellAmt}, buyAmt:${buyAmt}`);
 
   const parsedBuyBeforeAmt = ((await conn.getParsedAccountInfo(buyTokenAcc, 'confirmed')).value?.data as ParsedAccountData).parsed.info.tokenAmount.uiAmount;
   console.log(sellTokenAcc.toString());

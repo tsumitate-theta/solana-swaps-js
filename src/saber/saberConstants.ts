@@ -101,3 +101,16 @@ export const SABER_USDT_USDC_MARKET = new SaberMarket(
   new PublicKey("2SL8iP8EjnUr6qTkbkfZt9tauXwJgc4GKXkYCCbLGbVP"), // USDT admin fee dest
   new PublicKey("GLztedC76MeBXjAmVXMezcHQzdmQaVLiXCZr9KEBSR6Y"), // USDC admin fee dest
 );
+
+export const SABER_PAI_USDC_MARKET = new SaberMarket(
+  "PAI/USDC",
+  TokenID.PAI,
+  TokenID.USDC,
+
+  new PublicKey("B2izdXFYb2sNwbWWHmh75T4aQFtfXsUxem9u2p61HGzf"), // swap
+  new PublicKey("7W9KMACQT6UmjRPEUQKXyVf4NjZ9Ux4PHs1e1P5PxDtA"), // swapAuthority
+  new PublicKey("4DYwgJtxwuJdAjkj5RJSNH4e7U329V5cNp7d3a1nLrZv"), // PAI valut
+  new PublicKey("EXNW64GEf1ACC6xY9BtKRiunrs6GoJSXBdxWN2eTPmrF"), // USDC vault
+  new PublicKey("5ERUKXf8w8aa9asB4EDGVQQYb3Awj9mFvgW6WuHmZqjf"), // PAI admin fee dest
+  new PublicKey("AA5bBxPuhCaMDpMq4xXHAMa5RwEUWzdiSYv1ipX9Lc8b"), // USDC admin fee dest
+);
