@@ -22,6 +22,9 @@ export const MINTS : {[key in TokenID] : PublicKey} = {
   [TokenID.PORT]: new PublicKey("PoRTjZMPXb9T7dyU7tpLEZRQj7e6ssfAE62j2oQuc6y"),
   [TokenID.weWETH]: new PublicKey("7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs"),
   [TokenID.pSOL]: new PublicKey("9EaLkQrbjmbbuZG9Wdpo8qfNUEjHATJFSycEmw6f1rGX"),
+  [TokenID.SLND]: new PublicKey("SLNDpmoWTVADgEdndyvWzroNL7zSi1dF9PC3xHGtPwp"),
+  [TokenID.stSOL]: new PublicKey("7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj"),
+  [TokenID.scnSOL]: new PublicKey("5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm"),
 }
 
 export const DECIMALS : {[key in TokenID]: number} = {
@@ -45,4 +48,7 @@ export const DECIMALS : {[key in TokenID]: number} = {
   [TokenID.PORT]: 1e6,
   [TokenID.weWETH]: 1e8,
   [TokenID.pSOL]: 1e9,
+  [TokenID.SLND]: 1e6,
+  [TokenID.stSOL]: 1e9,
+  [TokenID.scnSOL]: 1e9,
 }

@@ -1,7 +1,7 @@
 // test only works in node
 import * as fs from "fs";
-import { RAYDIUM_BTC_USDC_MARKET, RAYDIUM_ETH_USDC_MARKET, RAYDIUM_mSOL_USDC_MARKET, RAYDIUM_RAY_USDC_MARKET, RAYDIUM_SOL_USDC_MARKET, RAYDIUM_APT_USDC_MARKET, RAYDIUM_SRM_USDC_MARKET, RAYDIUM_MER_USDC_MARKET, RAYDIUM_PORT_USDC_MARKET, RAYDIUM_weWETH_USDC_MARKET } from "./raydium";
-import { ORCA_MNDE_mSOL_MARKET, ORCA_ORCA_USDC_MARKET, ORCA_SBR_USDC_MARKET, ORCA_USDT_USDC_MARKET, ORCA_FTT_USDC_MARKET, ORCA_pSOL_USDC_MARKET } from "./orca"
+import { RAYDIUM_SRM_USDC_MARKET, RAYDIUM_MER_USDC_MARKET } from "./raydium";
+import { ORCA_MNDE_mSOL_MARKET, ORCA_ORCA_USDC_MARKET, ORCA_SBR_USDC_MARKET, ORCA_USDT_USDC_MARKET, ORCA_FTT_USDC_MARKET, ORCA_pSOL_USDC_MARKET, ORCA_weWETH_USDC_MARKET, ORCA_BTC_USDC_MARKET, ORCA_ETH_USDC_MARKET, ORCA_mSOL_USDC_MARKET, ORCA_PORT_USDC_MARKET, ORCA_RAY_USDC_MARKET, ORCA_SOL_USDC_MARKET, ORCA_APT_USDC_MARKET, ORCA_scnSOL_USDC_MARKET, ORCA_SLND_USDC_MARKET, ORCA_stSOL_USDC_MARKET } from "./orca"
 import { SABER_PAI_USDC_MARKET, SABER_USTv2_USDC_MARKET } from './saber';
 import { Connection, Keypair, ParsedAccountData, PublicKey, Transaction } from "@solana/web3.js";
 import { Token, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
@@ -20,16 +20,78 @@ if(process.argv.length < 6) {
 
 const [, , fileStr, coin, buySell, sellAmt, buyAmt] = process.argv;
 
+// export async function getOwnedTokenAccounts(
+//   connection:Connection,
+//   owner: PublicKey
+// ): Promise<PublicKey[]> {
+//   const accounts = await connection.getProgramAccounts(
+//     TOKEN_PROGRAM_ID,
+//     {
+//       filters: [
+//         {
+//           memcmp: {
+//             offset: AccountLayout.offsetOf('owner'),
+//             bytes: owner.toBase58(),
+//           },
+//         },
+//         {
+//           dataSize: AccountLayout.span,
+//         },
+//       ],
+//     },
+//   );
+//   return accounts.map((r: any) => {
+//     console.log(JSON.stringify(r, null, 2));
+//     return r.pubkey;
+//   });
+// }
+
+// async function createAssociatedTokAcc(connection: Connection, keypair:Keypair, tokenId: TokenID, aTokenAddr: PublicKey) {
+//   console.log(`Creating token account for ${tokenId}:${MINTS[tokenId]}, ${aTokenAddr.toBase58()}`);
+//   const ix = Token.createAssociatedTokenAccountInstruction(
+//         ASSOCIATED_TOKEN_PROGRAM_ID,
+//         TOKEN_PROGRAM_ID,
+//         MINTS[tokenId],
+//         aTokenAddr,
+//         keypair.publicKey,
+//         keypair.publicKey,
+//       );
+//   const tx = new Transaction();
+//   tx.add(ix);
+//   const sig = await connection.sendTransaction(tx, [keypair], {preflightCommitment: 'confirmed'});
+//   await connection.confirmTransaction(sig, 'confirmed');
+// }
+
 async function getAssociatedTokAcc(tokenId: TokenID, owner: PublicKey) : Promise<PublicKey> {
   return await Token.getAssociatedTokenAddress(
     ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, MINTS[tokenId], owner);
 
 }
 
+// async function getOrAssociatedTokAcc(connection: Connection, tokenId: TokenID, keypair:Keypair) : Promise<PublicKey> {
+//   const ownedAccounts = await  getOwnedTokenAccounts(connection, keypair.publicKey);
+//   const tokenAccount = await getAssociatedTokAcc(tokenId, keypair.publicKey);
+
+//   ownedAccounts.forEach((a) => {
+//     console.log(`${a}`);
+//   });
+  
+//   if (ownedAccounts.some((p) => {p.equals(tokenAccount)})) {
+//     return tokenAccount
+//   } 
+//   await createAssociatedTokAcc(connection, keypair, tokenId, tokenAccount);
+//   return tokenAccount;
+// }
+
 async function doSwap() {
   const keyStr = fs.readFileSync(fileStr, "utf8");
   const privateKey = JSON.parse(keyStr);
   const keypair = Keypair.fromSecretKey(new Uint8Array(privateKey));
+
+    //const conn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+  // const conn = new Connection("https://lokidfxnwlabdq.main.genesysgo.net:8899/", "confirmed");
+  const conn = new Connection("https://192.168.1.50:10899", "confirmed");
+
   const aptTokenAccount = await getAssociatedTokAcc(TokenID.APT, keypair.publicKey);
   const btcTokenAccount = await getAssociatedTokAcc(TokenID.BTC, keypair.publicKey);
   const ethTokenAccount =  await getAssociatedTokAcc(TokenID.ETH, keypair.publicKey); 
@@ -50,11 +112,12 @@ async function doSwap() {
   const wewethTokenAccount = await getAssociatedTokAcc(TokenID.weWETH, keypair.publicKey);
   const paiTokenAccount = await getAssociatedTokAcc(TokenID.PAI, keypair.publicKey);
   const psolTokenAccount = await getAssociatedTokAcc(TokenID.pSOL, keypair.publicKey);
+  const slndTokenAccount = await getAssociatedTokAcc(TokenID.SLND, keypair.publicKey);
+  const stsolTokenAccount = await getAssociatedTokAcc(TokenID.stSOL, keypair.publicKey);
+  const scnsolTokenAccount = await getAssociatedTokAcc(TokenID.scnSOL, keypair.publicKey);
   
 
-  //const conn = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-  // const conn = new Connection("https://lokidfxnwlabdq.main.genesysgo.net:8899/", "confirmed");
-  const conn = new Connection("https://192.168.1.50:10899", "confirmed");
+
   
   const isBuy = buySell === "buy";
 
@@ -78,6 +141,9 @@ async function doSwap() {
     weWETH: TokenID.weWETH,
     PAI: TokenID.PAI,
     pSOL: TokenID.pSOL,
+    SLND: TokenID.SLND,
+    stSOL: TokenID.stSOL,
+    scnSOL: TokenID.scnSOL,
   }[coin];
   invariant(mainTokenType);
 
@@ -102,30 +168,36 @@ async function doSwap() {
     PORT: portTokenAccount,
     weWETH: wewethTokenAccount,
     pSOL: psolTokenAccount,
+    SLND: slndTokenAccount,
+    stSOL: stsolTokenAccount,
+    scnSOL: scnsolTokenAccount,
   }
   const mainTokenAcc = tokenAccounts[mainTokenType];
   invariant(mainTokenAcc);
 
   const getSwapper = {
-    APT: () => RAYDIUM_APT_USDC_MARKET,
-    BTC: ()=> RAYDIUM_BTC_USDC_MARKET,
-    ETH: ()=> RAYDIUM_ETH_USDC_MARKET,
-    SOL: ()=> RAYDIUM_SOL_USDC_MARKET,
-    mSOL: ()=> RAYDIUM_mSOL_USDC_MARKET,
+    APT: () => ORCA_APT_USDC_MARKET,
+    BTC: ()=> ORCA_BTC_USDC_MARKET,
+    ETH: ()=> ORCA_ETH_USDC_MARKET,
+    SOL: ()=> ORCA_SOL_USDC_MARKET,
+    mSOL: ()=> ORCA_mSOL_USDC_MARKET,
     USDT: ()=> ORCA_USDT_USDC_MARKET,
     UST: ()=> MERCURIAL_USTv1_USDC_MARKET,
     SBR: ()=> ORCA_SBR_USDC_MARKET,
     ORCA: ()=> ORCA_ORCA_USDC_MARKET,
-    RAY: ()=> RAYDIUM_RAY_USDC_MARKET,
+    RAY: ()=> ORCA_RAY_USDC_MARKET,
     USTv2: () => SABER_USTv2_USDC_MARKET,
     MNDE: ()=> ORCA_MNDE_mSOL_MARKET,
     FTT: () => ORCA_FTT_USDC_MARKET ,
     SRM: () => RAYDIUM_SRM_USDC_MARKET,
     MER: () => RAYDIUM_MER_USDC_MARKET,
-    PORT: () => RAYDIUM_PORT_USDC_MARKET,
-    weWETH: () => RAYDIUM_weWETH_USDC_MARKET,
+    PORT: () => ORCA_PORT_USDC_MARKET,
+    weWETH: () => ORCA_weWETH_USDC_MARKET,
     PAI: () => SABER_PAI_USDC_MARKET,
     pSOL: () => ORCA_pSOL_USDC_MARKET,
+    SLND: () => ORCA_SLND_USDC_MARKET,
+    stSOL: () => ORCA_stSOL_USDC_MARKET,
+    scnSOL: () => ORCA_scnSOL_USDC_MARKET,
   }[coin];
   invariant(getSwapper);
   const swapper = getSwapper();
@@ -158,6 +230,9 @@ async function doSwap() {
     weWETH: SwapperType.Single,
     PAI: SwapperType.Single,
     pSOL: SwapperType.Single,
+    SLND: SwapperType.Single,
+    stSOL: SwapperType.Single,
+    scnSOL: SwapperType.Single,
   }[coin];
   invariant(swapperType);
 

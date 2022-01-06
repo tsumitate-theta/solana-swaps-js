@@ -21,6 +21,9 @@ export enum TokenID {
   PORT = "PORT",
   weWETH = "weWETH",
   pSOL = "pSOL",
+  SLND = "SLND",
+  stSOL = "stSOL",
+  scnSOL = "scnSOL"
 }
 
 export enum SwapperType {
@@ -55,6 +58,8 @@ export interface PairMarket {
 
 // a swapper is usually associated with a specific market, and can perform swap
 export interface Swapper {
+  tokenIdA: TokenID;
+  tokenIdB: TokenID;
   createSwapInstructions(
     fromToken: TokenID,
     fromAmount: number,
