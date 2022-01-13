@@ -1,11 +1,17 @@
-import { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import { Market, PairMarket, Swapper, TokenID } from "../types";
 import { Parser } from "../utils/Parser";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { AccountLayout, TOKEN_PROGRAM_ID, u64 } from "@solana/spl-token";
+import { U64Utils, ZERO } from "../utils/U64Utils";
+import Decimal from "decimal.js";
+import { DECIMALS } from "..";
+import { DecimalUtil } from "../utils";
+import { AMMMarket } from "../AMMMarket";
 
 export const ORCA_SWAP_PROGRAM = new PublicKey("9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP");
 
-export class OrcaMarket extends Market implements Swapper, PairMarket {
+export class OrcaMarket extends AMMMarket implements Swapper, PairMarket {
+  dexname: string;
   constructor(
     public name: string,
     public tokenIdA: TokenID,
@@ -17,10 +23,11 @@ export class OrcaMarket extends Market implements Swapper, PairMarket {
     public poolMint: PublicKey,
     public fees: PublicKey,
   ) {
-    super(name, [tokenIdA, tokenIdB]);
+    super(name, tokenIdA, tokenIdB, vaultA, vaultB);
+    this.dexname = "Orca";
   }
 
-  getSwapper() : Swapper {
+  getSwapper(): Swapper {
     return this;
   }
 
@@ -37,11 +44,11 @@ export class OrcaMarket extends Market implements Swapper, PairMarket {
     minToAmount: number,
     toTokenAccount: PublicKey,
     tradeOwner: PublicKey,
-  ) : Promise<TransactionInstruction[]> {
+  ): Promise<TransactionInstruction[]> {
 
     const buffer = this.INST_LAYOUT.encode({
-      cmd: 1, 
-      in_amount: fromAmount, 
+      cmd: 1,
+      in_amount: fromAmount,
       min_out_amount: minToAmount
     });
 
@@ -49,24 +56,25 @@ export class OrcaMarket extends Market implements Swapper, PairMarket {
     const poolDest = toToken === this.tokenIdA ? this.vaultA : this.vaultB;
 
     const ix = new TransactionInstruction({
-      programId: ORCA_SWAP_PROGRAM, 
+      programId: ORCA_SWAP_PROGRAM,
       keys: [
-        {pubkey: this.swap,             isSigner: false, isWritable: false},
-        {pubkey: this.swapAuthority,    isSigner: false, isWritable: false},
-        {pubkey: tradeOwner,            isSigner: true,  isWritable: false},
-        {pubkey: fromTokenAccount,      isSigner: false, isWritable: true},
-        {pubkey: poolSource,            isSigner: false, isWritable: true},
-        {pubkey: poolDest,              isSigner: false, isWritable: true},
-        {pubkey: toTokenAccount,        isSigner: false, isWritable: true},
-        {pubkey: this.poolMint,         isSigner: false, isWritable: true},
-        {pubkey: this.fees,             isSigner: false, isWritable: true},
-        {pubkey: TOKEN_PROGRAM_ID,      isSigner: false, isWritable: false},
+        { pubkey: this.swap, isSigner: false, isWritable: false },
+        { pubkey: this.swapAuthority, isSigner: false, isWritable: false },
+        { pubkey: tradeOwner, isSigner: true, isWritable: false },
+        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: poolSource, isSigner: false, isWritable: true },
+        { pubkey: poolDest, isSigner: false, isWritable: true },
+        { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: this.poolMint, isSigner: false, isWritable: true },
+        { pubkey: this.fees, isSigner: false, isWritable: true },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       ],
       data: buffer,
     });
 
     return [ix];
   }
+
 }
 
 export const ORCA_USDT_USDC_MARKET = new OrcaMarket(

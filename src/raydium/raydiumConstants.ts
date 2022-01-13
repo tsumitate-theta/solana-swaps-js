@@ -1,15 +1,23 @@
-import { PublicKey, TransactionInstruction } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import {Market, PairMarket, Swapper, TokenID} from "../types";
-import { MINTS } from "../mints";
+import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { AccountLayout, TOKEN_PROGRAM_ID, u64 } from "@solana/spl-token";
+import { Market, PairMarket, Swapper, TokenID } from "../types";
+import { DECIMALS, MINTS } from "../mints";
 import { SERUM_PROGRAM } from "../serum/serumConstants";
 import { Parser } from "../utils/Parser";
+import { AMMMarket, SwapInfo } from "../AMMMarket";
+import { Market as SerumMarket, OpenOrders, Orderbook, parseInstructionErrorResponse } from '@project-serum/serum';
+import BN from 'bn.js';
+import Decimal from "decimal.js";
+import { AMM_INFO_LAYOUT_V4, getMultipleAccounts } from "../utils/utils";
 
 export const RAYDIUM_AMM_PROGRAM = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
 
-export class RaydiumMarket extends Market implements Swapper, PairMarket {
+export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
   mintA: PublicKey;
   mintB: PublicKey;
+
+  market!: SerumMarket;
+  dexname: string;
 
   INST_LAYOUT = new Parser()
     .u8("cmd")
@@ -33,15 +41,17 @@ export class RaydiumMarket extends Market implements Swapper, PairMarket {
     public serumVaultB: PublicKey,
     public serumVaultSigner: PublicKey,
   ) {
-    super(name, [tokenIdA, tokenIdB]);
-    if(name !== `${tokenIdA}/${tokenIdB}`) {
+    super(name, tokenIdA, tokenIdB, raydiumVaultA, raydiumVaultB);
+    if (name !== `${tokenIdA}/${tokenIdB}`) {
       throw new Error("Incorrect name!");
     }
     this.mintA = MINTS[tokenIdA];
     this.mintB = MINTS[tokenIdB];
+    this.dexname = "Rayidium";
+
   }
 
-  getSwapper() : Swapper {
+  getSwapper(): Swapper {
     return this;
   }
 
@@ -53,34 +63,34 @@ export class RaydiumMarket extends Market implements Swapper, PairMarket {
     minToAmount: number,
     toTokenAccount: PublicKey,
     tradeOwner: PublicKey,
-  ) : Promise<TransactionInstruction[]> {
+  ): Promise<TransactionInstruction[]> {
     const buffer = this.INST_LAYOUT.encode({
-      cmd: 9, 
-      in_amount: fromAmount, 
+      cmd: 9,
+      in_amount: fromAmount,
       min_out_amount: minToAmount
     });
 
     const ix = new TransactionInstruction({
-      programId: RAYDIUM_AMM_PROGRAM, 
+      programId: RAYDIUM_AMM_PROGRAM,
       keys: [
-        {pubkey: TOKEN_PROGRAM_ID,      isSigner: false, isWritable: false},
-        {pubkey: this.amm,              isSigner: false, isWritable: true},
-        {pubkey: this.ammAuthority,     isSigner: false, isWritable: false},
-        {pubkey: this.openOrders,       isSigner: false, isWritable: true},
-        {pubkey: this.targetOrders,     isSigner: false, isWritable: true},
-        {pubkey: this.raydiumVaultA,    isSigner: false, isWritable: true},
-        {pubkey: this.raydiumVaultB,    isSigner: false, isWritable: true},
-        {pubkey: SERUM_PROGRAM,         isSigner: false, isWritable: false},
-        {pubkey: this.serumMarket,      isSigner: false, isWritable: true},
-        {pubkey: this.serumBids,        isSigner: false, isWritable: true},
-        {pubkey: this.serumAsks,        isSigner: false, isWritable: true},
-        {pubkey: this.serumEvents,      isSigner: false, isWritable: true},
-        {pubkey: this.serumVaultA,      isSigner: false, isWritable: true},
-        {pubkey: this.serumVaultB,      isSigner: false, isWritable: true},
-        {pubkey: this.serumVaultSigner, isSigner: false, isWritable: false},
-        {pubkey: fromTokenAccount,      isSigner: false, isWritable: true},
-        {pubkey: toTokenAccount,        isSigner: false, isWritable: true},
-        {pubkey: tradeOwner,            isSigner: true,  isWritable: false},
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: this.amm, isSigner: false, isWritable: true },
+        { pubkey: this.ammAuthority, isSigner: false, isWritable: false },
+        { pubkey: this.openOrders, isSigner: false, isWritable: true },
+        { pubkey: this.targetOrders, isSigner: false, isWritable: true },
+        { pubkey: this.raydiumVaultA, isSigner: false, isWritable: true },
+        { pubkey: this.raydiumVaultB, isSigner: false, isWritable: true },
+        { pubkey: SERUM_PROGRAM, isSigner: false, isWritable: false },
+        { pubkey: this.serumMarket, isSigner: false, isWritable: true },
+        { pubkey: this.serumBids, isSigner: false, isWritable: true },
+        { pubkey: this.serumAsks, isSigner: false, isWritable: true },
+        { pubkey: this.serumEvents, isSigner: false, isWritable: true },
+        { pubkey: this.serumVaultA, isSigner: false, isWritable: true },
+        { pubkey: this.serumVaultB, isSigner: false, isWritable: true },
+        { pubkey: this.serumVaultSigner, isSigner: false, isWritable: false },
+        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+        { pubkey: tradeOwner, isSigner: true, isWritable: false },
       ],
       data: buffer,
     });
@@ -88,13 +98,309 @@ export class RaydiumMarket extends Market implements Swapper, PairMarket {
     return [ix];
   }
 
+  async loadMarket(connection: Connection) {
+    console.time(`Market.load`);
+    this.market = await SerumMarket.load(connection, this.serumMarket, {}, SERUM_PROGRAM);
+    console.timeEnd(`Market.load`);
+  }
+
+  async getTokenCount(
+    connection: Connection,
+    side: "buy" | "sell" = "buy"
+  ) {
+
+    // トークンの数を取る
+    const raws = await getMultipleAccounts(
+      connection,
+      [this.getInputVault(side), this.getOutputVault(side), this.amm]
+    );
+
+    let needTakePnlCoin = 0;
+    let needTakePnlPc = 0;
+    const tokens = raws.map((raw) => {
+      if (raw != undefined) {
+        if (raw.publicKey.equals(this.amm)) {
+          const accountInfo = AMM_INFO_LAYOUT_V4.decode(raw.accountInfo.data);
+          needTakePnlCoin = accountInfo.needTakePnlCoin;
+          needTakePnlPc = accountInfo.needTakePnlPc;
+        } else {
+          const accountInfo = AccountLayout.decode(raw.accountInfo.data);
+          accountInfo.mint = new PublicKey(accountInfo.mint);
+          accountInfo.owner = new PublicKey(accountInfo.owner);
+          accountInfo.amount = u64.fromBuffer(accountInfo.amount);
+          accountInfo.pubkey = raw.publicKey;
+          return accountInfo;
+        }
+
+      } else {
+        undefined;
+      }
+    });
+
+    console.log(`needTakePnlCoin: ${needTakePnlCoin}`);
+    console.log(`needTakePnlPc: ${needTakePnlPc}`);
+
+    const inputTokenTake = side === "buy" ? needTakePnlPc : needTakePnlCoin;
+    const outputTokenTake = side === "buy" ? needTakePnlCoin : needTakePnlPc;
+
+    const inputTokenAccount = tokens.find((token) => this.getInputVault(side).equals(token.pubkey));
+    const outputTokenAccount = tokens.find((token) => this.getOutputVault(side).equals(token.pubkey));
+
+    if (inputTokenAccount === undefined || outputTokenAccount === undefined) {
+      throw new Error("Unable to fetch accounts for specified tokens.");
+    }
+
+    return {
+      inPoolAmount: new u64(inputTokenAccount.amount.sub(new u64(inputTokenTake))),
+      outPoolAmount: new u64(outputTokenAccount.amount.sub(new u64(outputTokenTake))),
+    };
+  }
+
+  async getSerumInfo(
+    connection: Connection,
+    inputTradeAmount = new u64(0),
+    slippage = 1
+  ) {
+
+
+
+    console.time(`orderbook load`);
+    const accountInfos = await connection.getMultipleAccountsInfo([
+      this.serumAsks,
+      this.serumBids,
+    ]);
+    console.timeEnd(`orderbook load`);
+
+    console.time(`orderbook decode`);
+    const orderbooks = accountInfos.map((info) => {
+      if (info != undefined) {
+        const orderbook = Orderbook.decode(this.market, info.data);
+        if (!orderbook) {
+          console.log(`no order book data.`);
+          return;
+        }
+
+        return orderbook;
+      } else {
+        undefined;
+      }
+    });
+
+    const asks = orderbooks[0],
+      bids = orderbooks[1];
+
+    if (!asks || !bids) {
+      return;
+    }
+    console.timeEnd(`orderbook decode`);
+
+    console.time(`forecastBuy`);
+    const serumBuyInfo = this.forecastBuy(asks, slippage);
+    console.timeEnd(`forecastBuy`);
+
+    // console.log(`inputTradeAmount:${serumBuyInfo.inputTradeAmount}`);
+    // console.log(`noSlippageOutputAmount:${serumBuyInfo.noSlippageOutputAmount}`);
+    // console.log(`expectedOutputAmount:${serumBuyInfo.expectedOutputAmount}`);
+    // console.log(`price:${serumBuyInfo.price}`);
+    // console.log(`rate:${serumBuyInfo.rate}`);
+    // console.log(`priceImpact:${serumBuyInfo.priceImpact}`);
+    // console.log(`worstPrice:${serumBuyInfo.worstPrice}`);
+
+    console.time(`forecastSell`);
+    const serumSellInfo = this.forecastSell(bids, slippage);
+    console.timeEnd(`forecastSell`);
+
+    // console.log(`inputTradeAmount:${serumSellInfo.inputTradeAmount}`);
+    // console.log(`noSlippageOutputAmount:${serumSellInfo.noSlippageOutputAmount}`);
+    // console.log(`expectedOutputAmount:${serumSellInfo.expectedOutputAmount}`);
+    // console.log(`price:${serumSellInfo.price}`);
+    // console.log(`rate:${serumSellInfo.rate}`);
+    // console.log(`priceImpact:${serumSellInfo.priceImpact}`);
+    // console.log(`worstPrice:${serumSellInfo.worstPrice}`);
+
+    return {
+      buyInfo: serumBuyInfo,
+      sellInfo: serumSellInfo
+    };
+
+  }
+
+  forecastBuy(orderBook: Orderbook, slippage: number): SwapInfo {
+    let coinOut = 0
+    let bestPrice = 0
+    let worstPrice = 0
+    // let availablePc = pcIn
+    let priceImpact = 0;
+    let prePriceImpact = 0;
+    let orderablePc = 0;
+    let avgPrice = 0;
+
+    let price, size: number;
+    for ([price, size] of orderBook.getL2(1000)) {
+
+      if (bestPrice === 0 && price !== 0) {
+        bestPrice = price
+      }
+
+      if (avgPrice === 0 && price !== 0) {
+        avgPrice = price
+      }
+
+      worstPrice = price
+      const orderPcVaule = price * size
+      prePriceImpact = (avgPrice - bestPrice) / bestPrice * 100
+      // console.log(`price:${price}, size:${size}, coinOut:${coinOut}, orderValue:${orderPcVaule}, orderableValue:${orderablePc}, avgPrice:${avgPrice}, priceImpcat:${prePriceImpact}`);
+
+      if (prePriceImpact > (slippage / 10)) {
+        break;
+      } else {
+        priceImpact = prePriceImpact
+        coinOut += size
+        orderablePc += orderPcVaule
+        avgPrice = orderablePc / coinOut;
+      }
+
+      // if (orderPcVaule >= availablePc) {
+      //   coinOut += availablePc / price
+      //   availablePc = 0
+      //   break
+      // } else {
+      //   coinOut += size
+      //   availablePc -= orderPcVaule
+      // }
+    }
+
+    coinOut = coinOut * 0.993
+
+    console.log(`ask bestprice:${bestPrice}`);
+
+
+    worstPrice = (worstPrice * (100 + slippage)) / 100
+    const amountOutWithSlippage = (coinOut * (100 - slippage)) / 100
+    const rate = coinOut / orderablePc;
+
+
+    // const avgPrice = (pcIn - availablePc) / coinOut;
+    // const maxInAllow = pcIn - availablePc
+
+    return {
+      market: this,
+      inputTradeAmount: new u64(orderablePc * DECIMALS[this.tokenIdB]),
+      noSlippageOutputAmount: new u64(coinOut * DECIMALS[this.tokenIdA]),
+      expectedOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdA]),
+      price: new Decimal(avgPrice),
+      rate: new Decimal(rate),
+      priceImpact: new Decimal(priceImpact),
+      minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdA]),
+    }
+  }
+
+  forecastSell(orderBook: Orderbook, slippage: number): SwapInfo {
+    let pcOut = 0
+    let bestPrice = 0
+    let worstPrice = 0
+    // let availableCoin = coinIn
+
+    let coinIn = 0;
+    let priceImpact = 0;
+    let prePriceImpact = 0;
+    let orderableValue = 0;
+    let avgPrice = 0;
+
+    let price, size: number;
+    for ([price, size] of orderBook.getL2(1000)) {
+
+      if (bestPrice === 0 && price !== 0) {
+        bestPrice = price
+      }
+
+      if (avgPrice === 0 && price !== 0) {
+        avgPrice = price
+      }
+
+      worstPrice = price
+      const orderVaule = price * size
+      prePriceImpact = (bestPrice - avgPrice) / bestPrice * 100
+      console.log(`price:${price}, size:${size}, orderValue:${orderVaule}, orderableValue:${orderableValue}, avgPrice:${avgPrice}, priceImpcat:${prePriceImpact}`);
+
+      if (prePriceImpact > (slippage / 10)) {
+        break;
+      } else {
+        priceImpact = prePriceImpact
+        pcOut += price * size
+        orderableValue += orderVaule
+        coinIn += size;
+        avgPrice = pcOut / coinIn;
+      }
+
+      // if (availableCoin <= size) {
+      //   pcOut += availableCoin * price
+      //   availableCoin = 0
+      //   break
+      // } else {
+      //   pcOut += price * size
+      //   availableCoin -= size
+      // }
+    }
+
+    pcOut = pcOut * 0.993
+
+    console.log(`bid bestprice:${bestPrice}`);
+
+    // const priceImpact = ((bestPrice - worstPrice) / bestPrice) * 100
+
+    worstPrice = (worstPrice * (100 - slippage)) / 100
+    const amountOutWithSlippage = (pcOut * (100 - slippage)) / 100
+    // const minimumOutputAmount = (amountOutWithSlippage * (100 - slippage)) / 100
+    const rate = pcOut / coinIn;
+
+    // const avgPrice = pcOut / (coinIn - availableCoin);
+    // const maxInAllow = coinIn - availableCoin
+
+    return {
+      market: this,
+      inputTradeAmount: new u64(coinIn * DECIMALS[this.tokenIdA]),
+      noSlippageOutputAmount: new u64(pcOut * DECIMALS[this.tokenIdB]),
+      expectedOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdB]),
+      price: new Decimal(avgPrice),
+      rate: new Decimal(rate.toString()),
+      priceImpact: new Decimal(priceImpact.toString()),
+      minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdB])
+    }
+  }
+
+  async getSwapInfos(connection: Connection,
+    inputTradeAmount = new u64(0),
+    slippage = 1
+  ) {
+    const swapInfo = await super.getSwapInfos(connection, inputTradeAmount, slippage);
+
+    console.time(`getSerumInfo`);
+    const serumInfo = await this.getSerumInfo(connection, inputTradeAmount, slippage);
+    console.timeEnd(`getSerumInfo`);
+
+    if (!serumInfo) {
+      return swapInfo;
+    }
+
+    console.log(`swap buy:${swapInfo.buyInfo.rate}, serum buy: ${serumInfo?.buyInfo.rate}`);
+    console.log(`swap sell:${swapInfo.sellInfo.rate}, serum sell: ${serumInfo?.sellInfo.rate}`);
+    console.log(`swap sell:${swapInfo.sellInfo.expectedOutputAmount}, serum sell: ${serumInfo?.sellInfo.expectedOutputAmount}`);
+
+    return {
+      buyInfo: swapInfo.buyInfo.rate.gt(serumInfo.buyInfo.rate) ? swapInfo.buyInfo : serumInfo.buyInfo,
+      sellInfo: swapInfo.sellInfo.rate.gt(serumInfo.sellInfo.rate) ? swapInfo.sellInfo : serumInfo.sellInfo,
+    }
+
+
+  }
 }
- 
+
 
 export const RAYDIUM_BTC_USDC_MARKET = new RaydiumMarket(
-  "BTC/USDC", 
-  TokenID.BTC, 
-  TokenID.USDC, 
+  "BTC/USDC",
+  TokenID.BTC,
+  TokenID.USDC,
   new PublicKey("6kbC5epG18DF2DwPEW34tBy5pGFS7pEGALR3v5MGxgc5"),  // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("L6A7qW935i2HgaiaRx6xNGCGQfFr4myFU51dUSnCshd"),   // openOrders
@@ -112,9 +418,9 @@ export const RAYDIUM_BTC_USDC_MARKET = new RaydiumMarket(
 );
 
 export const RAYDIUM_ETH_USDC_MARKET = new RaydiumMarket(
-  "ETH/USDC", 
-  TokenID.ETH, 
-  TokenID.USDC, 
+  "ETH/USDC",
+  TokenID.ETH,
+  TokenID.USDC,
   new PublicKey("AoPebtuJC4f2RweZSxcVCcdeTgaEXY64Uho8b5HdPxAR"),  // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("7PwhFjfFaYp7w9N8k2do5Yz7c1G5ebp3YyJRhV4pkUJW"),   // openOrders
@@ -132,9 +438,9 @@ export const RAYDIUM_ETH_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_SOL_USDC_MARKET = new RaydiumMarket(
-  "SOL/USDC", 
-  TokenID.SOL, 
-  TokenID.USDC, 
+  "SOL/USDC",
+  TokenID.SOL,
+  TokenID.USDC,
   new PublicKey("58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2"),  // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("HRk9CMrpq7Jn9sh7mzxE8CChHG8dneX9p475QKz4Fsfc"),  // openOrders
@@ -152,9 +458,9 @@ export const RAYDIUM_SOL_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_USDT_USDC_MARKET = new RaydiumMarket(
-  "USDT/USDC", 
-  TokenID.USDT, 
-  TokenID.USDC, 
+  "USDT/USDC",
+  TokenID.USDT,
+  TokenID.USDC,
   new PublicKey("7TbGqz32RsuwXbXY7EyBCiAnMbJq1gm1wKmfjQjuwoyF"),  // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("6XXvXS3meWqnftEMUgdY8hDWGJfrb8t22x2k1WyVYwhF"),  // openOrders
@@ -172,9 +478,9 @@ export const RAYDIUM_USDT_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_RAY_USDC_MARKET = new RaydiumMarket(
-  "RAY/USDC", 
-  TokenID.RAY, 
-  TokenID.USDC, 
+  "RAY/USDC",
+  TokenID.RAY,
+  TokenID.USDC,
   new PublicKey("6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg"),  // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("J8u8nTHYtvudyqwLrXZboziN95LpaHFHpd97Jm5vtbkW"),  // openOrders
@@ -192,9 +498,9 @@ export const RAYDIUM_RAY_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_mSOL_USDC_MARKET = new RaydiumMarket(
-  "mSOL/USDC", 
-  TokenID.mSOL, 
-  TokenID.USDC, 
+  "mSOL/USDC",
+  TokenID.mSOL,
+  TokenID.USDC,
   new PublicKey("ZfvDXXUhZDzDVsapffUyXHj9ByCoPjP4thL6YXcZ9ix"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("4zoatXFjMSirW2niUNhekxqeEZujjC1oioKCEJQMLeWF"),  // openOrders
@@ -212,9 +518,9 @@ export const RAYDIUM_mSOL_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_APT_USDC_MARKET = new RaydiumMarket(
-  "APT/USDC", 
-  TokenID.APT, 
-  TokenID.USDC, 
+  "APT/USDC",
+  TokenID.APT,
+  TokenID.USDC,
   new PublicKey("4crhN3D8R5rnZd66q9b32P7K649e5XdzCfPMPiTzBceH"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("9ZkyYVUKZ3iWZnx6uJNUNKdv3NW3WcKNWZMg2YDYTxSx"),  // openOrders
@@ -232,9 +538,9 @@ export const RAYDIUM_APT_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_SRM_USDC_MARKET = new RaydiumMarket(
-  "SRM/USDC", 
-  TokenID.SRM, 
-  TokenID.USDC, 
+  "SRM/USDC",
+  TokenID.SRM,
+  TokenID.USDC,
   new PublicKey("8tzS7SkUZyHPQY7gLqsMCXZ5EDCgjESUHcB17tiR1h3Z"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("GJwrRrNeeQKY2eGzuXGc3KBrBftYbidCYhmA6AZj2Zur"),  // openOrders
@@ -252,9 +558,9 @@ export const RAYDIUM_SRM_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_SBR_USDC_MARKET = new RaydiumMarket(
-  "SBR/USDC", 
-  TokenID.SBR, 
-  TokenID.USDC, 
+  "SBR/USDC",
+  TokenID.SBR,
+  TokenID.USDC,
   new PublicKey("5cmAS6Mj4pG2Vp9hhyu3kpK9yvC7P6ejh9HiobpTE6Jc"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("8bEDWrUBqMV7ei55PgySABm8swC9WFW24NB6U5f5sPJT"),  // openOrders
@@ -272,9 +578,9 @@ export const RAYDIUM_SBR_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_FTT_USDC_MARKET = new RaydiumMarket(
-  "FTT/USDC", 
-  TokenID.FTT, 
-  TokenID.USDC, 
+  "FTT/USDC",
+  TokenID.FTT,
+  TokenID.USDC,
   new PublicKey("4C2Mz1bVqe42QDDTyJ4HFCFFGsH5YDzo91Cen5w5NGun"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("23WS5XY3srvBtnP6hXK64HAsXTuj1kT7dd7srjrJUNTR"),  // openOrders
@@ -292,9 +598,9 @@ export const RAYDIUM_FTT_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_ORCA_USDC_MARKET = new RaydiumMarket(
-  "ORCA/USDC", 
-  TokenID.ORCA, 
-  TokenID.USDC, 
+  "ORCA/USDC",
+  TokenID.ORCA,
+  TokenID.USDC,
   new PublicKey("C5yXRTp39qv5WZrfiqoqeyK6wvbqS97oBqbsDUqfZyu"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("BUwThGpiXwei6xeAZyeSofZYAsQRwnqhyyZ3Xe3J1YAB"),  // openOrders
@@ -312,9 +618,9 @@ export const RAYDIUM_ORCA_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_MNDE_mSOL_MARKET = new RaydiumMarket(
-  "MNDE/mSOL", 
-  TokenID.MNDE, 
-  TokenID.mSOL, 
+  "MNDE/mSOL",
+  TokenID.MNDE,
+  TokenID.mSOL,
   new PublicKey("2kPA9XUuHUifcCYTnjSuN7ZrC3ma8EKPrtzUhC86zj3m"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("G3qeShDT2w3Y9XnJbk5TZsx1qbxkBLFmRsnNVLMnkNZb"),  // openOrders
@@ -332,9 +638,9 @@ export const RAYDIUM_MNDE_mSOL_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_MER_USDC_MARKET = new RaydiumMarket(
-  "MER/USDC", 
-  TokenID.MER, 
-  TokenID.USDC, 
+  "MER/USDC",
+  TokenID.MER,
+  TokenID.USDC,
   new PublicKey("BkfGDk676QFtTiGxn7TtEpHayJZRr6LgNk9uTV2MH4bR"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("FNwXaqyYNKNwJ8Qc39VGzuGnPcNTCVKExrgUKTLCcSzU"),  // openOrders
@@ -352,9 +658,9 @@ export const RAYDIUM_MER_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_PORT_USDC_MARKET = new RaydiumMarket(
-  "PORT/USDC", 
-  TokenID.PORT, 
-  TokenID.USDC, 
+  "PORT/USDC",
+  TokenID.PORT,
+  TokenID.USDC,
   new PublicKey("6nJes56KF999Q8VtQTrgWEHJGAfGMuJktGb8x2uWff2u"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("ENfqr7WFKJy9VRwfDkgL4HvMM6GU7pHyowzZsZwx8P39"),  // openOrders
@@ -372,9 +678,9 @@ export const RAYDIUM_PORT_USDC_MARKET = new RaydiumMarket(
 )
 
 export const RAYDIUM_weWETH_USDC_MARKET = new RaydiumMarket(
-  "weWETH/USDC", 
-  TokenID.weWETH, 
-  TokenID.USDC, 
+  "weWETH/USDC",
+  TokenID.weWETH,
+  TokenID.USDC,
   new PublicKey("EoNrn8iUhwgJySD1pHu8Qxm5gSQqLK3za4m8xzD2RuEb"),   // amm
   new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
   new PublicKey("6iwDsRGaQucEcfXX8TgDW1eyTfxLAGrypxdMJ5uqoYcp"),  // openOrders

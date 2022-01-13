@@ -1,4 +1,8 @@
-import { PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { AccountLayout, u64 } from "@solana/spl-token";
+import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
+import Decimal from "decimal.js";
+import { DECIMALS } from ".";
+import { DecimalUtil, U64Utils, ZERO } from "./utils";
 
 export enum TokenID {
   APT = "APT",
@@ -33,7 +37,7 @@ export enum SwapperType {
 
 // market contains meta data
 export abstract class Market {
-
+  dexname: string | undefined;
   constructor(
     public name: string, 
     public tokenIds: TokenID[]
