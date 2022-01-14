@@ -75,6 +75,13 @@ export class OrcaMarket extends AMMMarket implements Swapper, PairMarket {
     return [ix];
   }
 
+  getFeeNumerator(): number {
+    return 30;
+  }
+  
+  getFeeDenominator(): number {
+    return 10000;
+  }
 }
 
 export const ORCA_USDT_USDC_MARKET = new OrcaMarket(
@@ -335,4 +342,30 @@ export const ORCA_scnSOL_USDC_MARKET = new OrcaMarket(
   new PublicKey("FZFJK64Fk1t619zmVPqCx8Uy29zJ3WuvjWitCQuxXRo3"), // vaultB
   new PublicKey("Dkr8B675PGnNwEr9vTKXznjjHke5454EQdz3iaSbparB"), // poolMint
   new PublicKey("HsC1Jo38jK3EpoNAkxfoUJhQVPa28anewZpLfeouUNk7"), // fees
+);
+
+export const ORCA_SLC_USDC_MARKET = new OrcaMarket(
+  "SLC/USDC",
+  TokenID.SLC,
+  TokenID.USDC,
+
+  new PublicKey("ByfDbpLVNVQHzU6E5dmLE1kcAKWAYRr9LPSGcVxxSRFF"), // swap
+  new PublicKey("7G6i4eQxiJvXg7hPn5kMrso8AHQNsdfPZZdJM3NNJuYz"), // swapAuthority
+  new PublicKey("EnvNSVK9JRQ5jmsz7nvbhYmR3MHSeMvB8Mf1e4VwoyRe"), // vaultA
+  new PublicKey("CHuUSo3EMCqtGWvUGRj4crmDzV5YKdYvqrhHSEitAP8V"), // vaultB 
+  new PublicKey("E5kSBqTDxFLbLNQaVVtPtnhEYVLMCK2fVSEKoMKL98qR"), // poolMint
+  new PublicKey("CtBP4cFDLzm3KQCQRKXwwsMgYG9f6hbwuUswUZBzYvvY"), // fees
+);
+
+export const ORCA_WOOF_USDC_MARKET = new OrcaMarket(
+  "WOOF/USDC",
+  TokenID.WOOF,
+  TokenID.USDC,
+
+  new PublicKey("HY6iq1dp7pHwstfmLFu8m2iEvRQtjX3N751jcN6KrQXU"), // swap
+  new PublicKey("8JuHyxYBpemmryQq4bcA1GTuKaub9JJuLPoNNJpwX9aP"), // swapAuthority
+  new PublicKey("8ju56eRfs9wg3GtoSFVoQoR6NnQn6gsWr6FkQyZ1EeBg"), // vaultA
+  new PublicKey("5WcqVktXr3Rr78MGGfcuwgB6azoN9EDCZLP4werGnfi4"), // vaultB 
+  new PublicKey("9EjcYfHcG8f1mccpHyaAwpoxaUPiheC6KgLQjyD9aTb6"), // poolMint
+  new PublicKey("886Yu2fd1x8xpb4icdrhxZemdD8PN9RLdrq6Mn89wR4k"), // fees
 );

@@ -1,3 +1,4 @@
+import { Market } from "@project-serum/serum";
 import { Token, ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SimulatedTransactionResponse, Transaction } from "@solana/web3.js";
 import Decimal from "decimal.js";
@@ -65,70 +66,88 @@ export class SwapClient {
         }));
     }
 
+    getTokenAccount(tokenId: TokenID) {
+        return this.wallets.get(tokenId);
+    }
+
     async doArb(buyInfo: SwapInfo, sellInfo: SwapInfo) {
         // this.wallets.forEach((value, key) => {
         //     console.log(`${key}: ${value.toString()}`);
         // });
-        console.log(`buy rate:${buyInfo.rate}`);
-        console.log(`sell rate:${sellInfo.rate}`);
+        // console.log(`buy rate:${buyInfo.rate}`);
+        // console.log(`sell rate:${sellInfo.rate}`);
 
-
-        console.log(`${sellInfo.market.dexname}, inPoolAmount: ${sellInfo.inPoolAmount}, outPoolAmount: ${sellInfo.outPoolAmount}`);
+        // console.log(`${buyInfo.market.dexname}, inPoolAmount: ${buyInfo.inPoolAmount}, outPoolAmount: ${buyInfo.outPoolAmount}`);
+        // console.log(`${sellInfo.market.dexname}, inPoolAmount: ${sellInfo.inPoolAmount}, outPoolAmount: ${sellInfo.outPoolAmount}`);
 
         const buyTradeValue = DecimalUtil.fromU64(buyInfo.inputTradeAmount, DECIMALS[buyInfo.market.tokenIdB]);
-        const sellTradeValue = DecimalUtil.fromU64(sellInfo.inputTradeAmount, DECIMALS[buyInfo.market.tokenIdA]).mul(sellInfo.price);
+        const sellTradeValue = DecimalUtil.fromU64(sellInfo.inputTradeAmount, DECIMALS[sellInfo.market.tokenIdA]).mul(sellInfo.price);
 
         const isSellMin = sellTradeValue.lt(buyTradeValue);
 
         let minInputAmount, minInputAmountU64, minOutputAmountU64, resultOutputAmount, resultOutputAmountU64;
 
         if (isSellMin) {
-            
+
+            // buyのoutputをsellのinput量に調整する
             minOutputAmountU64 = sellInfo.inputTradeAmount;
 
-            resultOutputAmount = DecimalUtil.fromU64(sellInfo.minimumOutputAmount, DECIMALS[buyInfo.market.tokenIdB]);
-            resultOutputAmountU64 = sellInfo.minimumOutputAmount;
+            // 最終アウトプットは期待値に設定する
+            resultOutputAmountU64 = sellInfo.expectedOutputAmount;
 
-            minInputAmount = DecimalUtil.fromU64(resultOutputAmountU64, DECIMALS[buyInfo.market.tokenIdB]).div(new Decimal(1.002))
+            // 最終アウトプットのUI量を計算
+            resultOutputAmount = DecimalUtil.fromU64(sellInfo.expectedOutputAmount, DECIMALS[buyInfo.market.tokenIdB]);
+
+            // 最終アウトプット量から初期インプット量を逆算する。控えめに0.1%の利益でよしとする
+            // minInputAmount = DecimalUtil.fromU64(resultOutputAmountU64, DECIMALS[buyInfo.market.tokenIdB]).div(new Decimal(1.001));
+
+            // buyInfoのrateで初期インプット量を逆算する
+            minInputAmount = DecimalUtil.fromU64(minOutputAmountU64, DECIMALS[buyInfo.market.tokenIdA]).div(buyInfo.rate.mul(new Decimal(0.9995)));
+
+            // 初期インプット料のUI量を計算する
             minInputAmountU64 = DecimalUtil.toU64(minInputAmount, DECIMALS[buyInfo.market.tokenIdB]);
-        } else {
-            minInputAmount = DecimalUtil.fromU64(buyInfo.inputTradeAmount, DECIMALS[buyInfo.market.tokenIdB]);
+        } else { // buyトレードの方が価値が小さい場合
+
+
+            // buyInfoのインプット量をそのままインプットに設定する
             minInputAmountU64 = buyInfo.inputTradeAmount;
 
-            minOutputAmountU64 = buyInfo.minimumOutputAmount;
+            // インプットのUI値を計算しておく
+            minInputAmount = DecimalUtil.fromU64(buyInfo.inputTradeAmount, DECIMALS[buyInfo.market.tokenIdB]);
 
-            resultOutputAmount = DecimalUtil.fromU64(minInputAmountU64, DECIMALS[buyInfo.market.tokenIdB]).mul(new Decimal(1.002));
+            // buyトレードの期待値をアウトプットに設定する
+            minOutputAmountU64 = buyInfo.expectedOutputAmount;
+
+            // 初期インプット量から最終アウトプット料を計算する。控えめに0.1%の利益でよしとする
+            // resultOutputAmount = DecimalUtil.fromU64(minInputAmountU64, DECIMALS[buyInfo.market.tokenIdB]).mul(new Decimal(1.001));
+
+            // sellInfoのrateで最終アウトプットを計算する
+            resultOutputAmount = DecimalUtil.fromU64(minOutputAmountU64, DECIMALS[buyInfo.market.tokenIdA]).mul(sellInfo.rate.mul(new Decimal(0.9995)));
+
+            // 最終アウトプットのUI値を計算する
             resultOutputAmountU64 = DecimalUtil.toU64(resultOutputAmount, DECIMALS[buyInfo.market.tokenIdB]);
         }
 
-        // const minInputAmount = Decimal.min(buyTradeValue, sellTradeValue);
-        console.log(`buyInput:${buyInfo.inputTradeAmount}, price:${buyInfo.price}, buyTradeValue:${buyTradeValue}`);
-        console.log(`sellInput:${sellInfo.inputTradeAmount},  price:${sellInfo.price}, sellTradeValue:${sellTradeValue}`);
+        // console.log(`buyInput:${buyInfo.inputTradeAmount}, price:${buyInfo.price}, buyTradeValue:${buyTradeValue}`);
+        // console.log(`sellInput:${sellInfo.inputTradeAmount},  price:${sellInfo.price}, sellTradeValue:${sellTradeValue}`);
 
 
         console.log(`isSellMin: ${isSellMin}`);
-        console.log(`minInputAmount: ${minInputAmount}`);
+        // console.log(`minInputAmount: ${minInputAmount}`);
         console.log(`minInputAmountU64: ${minInputAmountU64}`);
 
         console.log(`minOutputAmountU64: ${minOutputAmountU64}`);
 
-        // const resultOutputAmount = minInputAmount.mul(new Decimal(1.002));
-        // const resultOutputAmountU64 = DecimalUtil.toU64(resultOutputAmount, DECIMALS[buyInfo.market.tokenIdB]);
-        console.log(`resultOutputAmount: ${resultOutputAmount}`);
+        // console.log(`resultOutputAmount: ${resultOutputAmount}`);
         console.log(`resultOutputAmountU64: ${resultOutputAmountU64}`);
+
+        console.log(`return: ${resultOutputAmount.div(minInputAmount)}`);
 
 
         const tokenBAccount = this.wallets.get(buyInfo.market.tokenIdB);
         const tokenAAccount = this.wallets.get(buyInfo.market.tokenIdA);
         invariant(tokenBAccount);
         invariant(tokenAAccount);
-
-        // buyInfo.market.getMinimumAmountOut(
-        //     buyInfo.
-        // )
-
-        // console.log(`sellTokenAccount:${sellTokenAccount.toString()}`);
-        // console.log(`buyTokenAccount:${buyTokenAccount.toString()}`);
 
         const buyIx = (await buyInfo.market.createSwapInstructions(
             buyInfo.market.tokenIdB,
@@ -161,28 +180,33 @@ export class SwapClient {
         tx.add(sellIx);
 
 
-        let simulateResult: SimulatedTransactionResponse | null = null;
-        try {
-            simulateResult = (
-                await this.connection.simulateTransaction(tx, [this.keypair])
-            ).value;
-        } catch (e) {
-            console.warn('Simulate transaction failed');
-        }
+        // let simulateResult: SimulatedTransactionResponse | null = null;
+        // try {
+        //     simulateResult = (
+        //         await this.connection.simulateTransaction(tx, [this.keypair])
+        //     ).value;
+        // } catch (e) {
+        //     console.warn('Simulate transaction failed');
+        // }
 
-        if (simulateResult) {
-            if (simulateResult.logs) {
-                for (let i = simulateResult.logs.length - 1; i >= 0; --i) {
-                    const line = simulateResult.logs[i];
-                    console.log(line);
-                }
-            }
-            if (simulateResult.err) {
-                console.log(`${JSON.stringify(simulateResult.err)}`);
-            }
-        }
+        // if (simulateResult) {
+        //     if (simulateResult.logs) {
+        //         for (let i = simulateResult.logs.length - 1; i >= 0; --i) {
+        //             const line = simulateResult.logs[i];
+        //             console.log(line);
+        //         }
+        //     }
+        //     if (simulateResult.err) {
+        //         console.log(`${JSON.stringify(simulateResult.err)}`);
+        //     }
+        // }
 
-        // const sig = await this.connection.sendTransaction(tx, [this.keypair], { preflightCommitment: 'processed' });
-        // await this.connection.confirmTransaction(sig);
+        const sig = await this.connection.sendTransaction(tx, [this.keypair], { preflightCommitment: 'processed' });
+        console.log(`transaction send: ${sig}`);
+        this.connection.confirmTransaction(sig)
+            .then((result) => {
+                console.log(`${sig} sucess!!!`);
+            });
+
     }
 }

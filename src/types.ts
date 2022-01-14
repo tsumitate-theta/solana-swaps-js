@@ -27,7 +27,9 @@ export enum TokenID {
   pSOL = "pSOL",
   SLND = "SLND",
   stSOL = "stSOL",
-  scnSOL = "scnSOL"
+  scnSOL = "scnSOL",
+  SLC = "SLC",
+  WOOF = "WOOF",
 }
 
 export enum SwapperType {

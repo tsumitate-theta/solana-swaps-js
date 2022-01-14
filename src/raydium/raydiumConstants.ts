@@ -18,6 +18,8 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
 
   market!: SerumMarket;
   dexname: string;
+  swapFeeNumerator: number;
+  swapFeeDenominator: number;
 
   INST_LAYOUT = new Parser()
     .u8("cmd")
@@ -47,7 +49,10 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
     }
     this.mintA = MINTS[tokenIdA];
     this.mintB = MINTS[tokenIdB];
-    this.dexname = "Rayidium";
+    this.dexname = "Raydium";
+
+    this.swapFeeNumerator = 0;
+    this.swapFeeDenominator = 0;
 
   }
 
@@ -98,6 +103,14 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
     return [ix];
   }
 
+  getFeeNumerator(): number {
+    return 25;
+  }
+  
+  getFeeDenominator(): number {
+    return 10000;
+  }
+
   async loadMarket(connection: Connection) {
     console.time(`Market.load`);
     this.market = await SerumMarket.load(connection, this.serumMarket, {}, SERUM_PROGRAM);
@@ -112,19 +125,42 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
     // トークンの数を取る
     const raws = await getMultipleAccounts(
       connection,
-      [this.getInputVault(side), this.getOutputVault(side), this.amm]
+      [this.getInputVault(side), this.getOutputVault(side), this.amm, this.openOrders]
     );
 
-    let needTakePnlCoin = 0;
-    let needTakePnlPc = 0;
+    let needTakePnlCoin;
+    let needTakePnlPc;
+
+    let totalPnlCoin;
+    let totalPnlPc;
+    let baseTokenTotal, quoteTokenTotal;
+
+    let pnlNumerator, pnlDenominator, swapFeeNumerator, swapFeeDenominator;
+
     const tokens = raws.map((raw) => {
       if (raw != undefined) {
         if (raw.publicKey.equals(this.amm)) {
           const accountInfo = AMM_INFO_LAYOUT_V4.decode(raw.accountInfo.data);
           needTakePnlCoin = accountInfo.needTakePnlCoin;
           needTakePnlPc = accountInfo.needTakePnlPc;
+          totalPnlCoin = accountInfo.totalPnlCoin;
+          totalPnlPc = accountInfo.totalPnlPc;
+          pnlNumerator = accountInfo.pnlNumerator;
+          pnlDenominator = accountInfo.pnlDenominator;
+          this.swapFeeNumerator = accountInfo.swapFeeNumerator;
+          this.swapFeeDenominator = accountInfo.swapFeeDenominator;
+          // console.log(`amm\n${JSON.stringify(accountInfo, null, 2)}`);
+
+        } else if (raw.publicKey.equals(this.openOrders)) {
+          const accountInfo = OpenOrders.getLayout(SERUM_PROGRAM).decode(raw.accountInfo.data);
+          baseTokenTotal = accountInfo.baseTokenTotal;
+          quoteTokenTotal = accountInfo.quoteTokenTotal;
+          
         } else {
           const accountInfo = AccountLayout.decode(raw.accountInfo.data);
+
+          // console.log(`account\n${JSON.stringify(accountInfo, null, 2)}`);
+
           accountInfo.mint = new PublicKey(accountInfo.mint);
           accountInfo.owner = new PublicKey(accountInfo.owner);
           accountInfo.amount = u64.fromBuffer(accountInfo.amount);
@@ -137,11 +173,23 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
       }
     });
 
-    console.log(`needTakePnlCoin: ${needTakePnlCoin}`);
-    console.log(`needTakePnlPc: ${needTakePnlPc}`);
+    // console.log(`needTakePnlCoin: ${needTakePnlCoin}`);
+    // console.log(`needTakePnlPc: ${needTakePnlPc}`);
+    // console.log(`totalPnlCoin: ${totalPnlCoin}`);
+    // console.log(`totalPnlPc: ${totalPnlPc}`);
+    // console.log(`baseTokenTotal: ${baseTokenTotal}`);
+    // console.log(`quoteTokenTotal: ${quoteTokenTotal}`);
+
+    // console.log(`pnlNumerator: ${pnlNumerator}`);
+    // console.log(`pnlDenominator: ${pnlDenominator}`);
+    // console.log(`swapFeeNumerator: ${swapFeeNumerator}`);
+    // console.log(`swapFeeDenominator: ${swapFeeDenominator}`);
 
     const inputTokenTake = side === "buy" ? needTakePnlPc : needTakePnlCoin;
     const outputTokenTake = side === "buy" ? needTakePnlCoin : needTakePnlPc;
+
+    const inputTokenSerum = side === "buy" ? quoteTokenTotal : baseTokenTotal;
+    const outputTokenSerum = side === "buy" ? baseTokenTotal : quoteTokenTotal;
 
     const inputTokenAccount = tokens.find((token) => this.getInputVault(side).equals(token.pubkey));
     const outputTokenAccount = tokens.find((token) => this.getOutputVault(side).equals(token.pubkey));
@@ -150,9 +198,15 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
       throw new Error("Unable to fetch accounts for specified tokens.");
     }
 
+    const inPoolAmount = new u64(inputTokenAccount.amount.add(new u64(inputTokenSerum)).sub(new u64(inputTokenTake)));
+    const outPoolAmount = new u64(outputTokenAccount.amount.add(new u64(outputTokenSerum)).sub(new u64(outputTokenTake)));
+
+    // console.log(`inPoolAmount:${inPoolAmount}`);
+    // console.log(`outPoolAmount:${outPoolAmount}`);
+
     return {
-      inPoolAmount: new u64(inputTokenAccount.amount.sub(new u64(inputTokenTake))),
-      outPoolAmount: new u64(outputTokenAccount.amount.sub(new u64(outputTokenTake))),
+      inPoolAmount: inPoolAmount,
+      outPoolAmount: outPoolAmount,
     };
   }
 
@@ -164,14 +218,14 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
 
 
 
-    console.time(`orderbook load`);
+    // console.time(`orderbook load`);
     const accountInfos = await connection.getMultipleAccountsInfo([
       this.serumAsks,
       this.serumBids,
     ]);
-    console.timeEnd(`orderbook load`);
+    // console.timeEnd(`orderbook load`);
 
-    console.time(`orderbook decode`);
+
     const orderbooks = accountInfos.map((info) => {
       if (info != undefined) {
         const orderbook = Orderbook.decode(this.market, info.data);
@@ -192,11 +246,8 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
     if (!asks || !bids) {
       return;
     }
-    console.timeEnd(`orderbook decode`);
 
-    console.time(`forecastBuy`);
     const serumBuyInfo = this.forecastBuy(asks, slippage);
-    console.timeEnd(`forecastBuy`);
 
     // console.log(`inputTradeAmount:${serumBuyInfo.inputTradeAmount}`);
     // console.log(`noSlippageOutputAmount:${serumBuyInfo.noSlippageOutputAmount}`);
@@ -206,9 +257,8 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
     // console.log(`priceImpact:${serumBuyInfo.priceImpact}`);
     // console.log(`worstPrice:${serumBuyInfo.worstPrice}`);
 
-    console.time(`forecastSell`);
+
     const serumSellInfo = this.forecastSell(bids, slippage);
-    console.timeEnd(`forecastSell`);
 
     // console.log(`inputTradeAmount:${serumSellInfo.inputTradeAmount}`);
     // console.log(`noSlippageOutputAmount:${serumSellInfo.noSlippageOutputAmount}`);
@@ -272,7 +322,7 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
 
     coinOut = coinOut * 0.993
 
-    console.log(`ask bestprice:${bestPrice}`);
+    // console.log(`ask bestprice:${bestPrice}`);
 
 
     worstPrice = (worstPrice * (100 + slippage)) / 100
@@ -291,7 +341,7 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
       price: new Decimal(avgPrice),
       rate: new Decimal(rate),
       priceImpact: new Decimal(priceImpact),
-      minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdA]),
+      // minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdA]),
     }
   }
 
@@ -321,7 +371,7 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
       worstPrice = price
       const orderVaule = price * size
       prePriceImpact = (bestPrice - avgPrice) / bestPrice * 100
-      console.log(`price:${price}, size:${size}, orderValue:${orderVaule}, orderableValue:${orderableValue}, avgPrice:${avgPrice}, priceImpcat:${prePriceImpact}`);
+      // console.log(`price:${price}, size:${size}, orderValue:${orderVaule}, orderableValue:${orderableValue}, avgPrice:${avgPrice}, priceImpcat:${prePriceImpact}`);
 
       if (prePriceImpact > (slippage / 10)) {
         break;
@@ -345,7 +395,7 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
 
     pcOut = pcOut * 0.993
 
-    console.log(`bid bestprice:${bestPrice}`);
+    // console.log(`bid bestprice:${bestPrice}`);
 
     // const priceImpact = ((bestPrice - worstPrice) / bestPrice) * 100
 
@@ -365,35 +415,35 @@ export class RaydiumMarket extends AMMMarket implements Swapper, PairMarket {
       price: new Decimal(avgPrice),
       rate: new Decimal(rate.toString()),
       priceImpact: new Decimal(priceImpact.toString()),
-      minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdB])
+      // minimumOutputAmount: new u64(amountOutWithSlippage * DECIMALS[this.tokenIdB])
     }
   }
 
-  async getSwapInfos(connection: Connection,
-    inputTradeAmount = new u64(0),
-    slippage = 1
-  ) {
-    const swapInfo = await super.getSwapInfos(connection, inputTradeAmount, slippage);
+  // async getSwapInfos(connection: Connection,
+  //   inputTradeAmount = new u64(0),
+  //   slippage = 1
+  // ) {
+  //   const swapInfo = await super.getSwapInfos(connection, inputTradeAmount, slippage);
 
-    console.time(`getSerumInfo`);
-    const serumInfo = await this.getSerumInfo(connection, inputTradeAmount, slippage);
-    console.timeEnd(`getSerumInfo`);
+  //   // console.time(`getSerumInfo`);
+  //   const serumInfo = await this.getSerumInfo(connection, inputTradeAmount, slippage);
+  //   // console.timeEnd(`getSerumInfo`);
 
-    if (!serumInfo) {
-      return swapInfo;
-    }
+  //   if (!serumInfo) {
+  //     return swapInfo;
+  //   }
 
-    console.log(`swap buy:${swapInfo.buyInfo.rate}, serum buy: ${serumInfo?.buyInfo.rate}`);
-    console.log(`swap sell:${swapInfo.sellInfo.rate}, serum sell: ${serumInfo?.sellInfo.rate}`);
-    console.log(`swap sell:${swapInfo.sellInfo.expectedOutputAmount}, serum sell: ${serumInfo?.sellInfo.expectedOutputAmount}`);
+  //   // console.log(`swap buy:${swapInfo.buyInfo.rate}, serum buy: ${serumInfo?.buyInfo.rate}`);
+  //   // console.log(`swap sell:${swapInfo.sellInfo.rate}, serum sell: ${serumInfo?.sellInfo.rate}`);
+  //   // console.log(`swap sell:${swapInfo.sellInfo.expectedOutputAmount}, serum sell: ${serumInfo?.sellInfo.expectedOutputAmount}`);
 
-    return {
-      buyInfo: swapInfo.buyInfo.rate.gt(serumInfo.buyInfo.rate) ? swapInfo.buyInfo : serumInfo.buyInfo,
-      sellInfo: swapInfo.sellInfo.rate.gt(serumInfo.sellInfo.rate) ? swapInfo.sellInfo : serumInfo.sellInfo,
-    }
+  //   return {
+  //     buyInfo: swapInfo.buyInfo.rate.gt(serumInfo.buyInfo.rate) ? swapInfo.buyInfo : serumInfo.buyInfo,
+  //     sellInfo: swapInfo.sellInfo.rate.gt(serumInfo.sellInfo.rate) ? swapInfo.sellInfo : serumInfo.sellInfo,
+  //   }
 
 
-  }
+  // }
 }
 
 
@@ -695,4 +745,44 @@ export const RAYDIUM_weWETH_USDC_MARKET = new RaydiumMarket(
   new PublicKey("8cCoWNtgCL7pMapGZ6XQ6NSyD1KC9cosUEs4QgeVq49d"),  // vaultA
   new PublicKey("C7KrymKrLWhCsSjFaUquXU3SYRmgYLRmMjQ4dyQeFiGE"),  // vaultB
   new PublicKey("FG3z1H2BBsf5ekEAxSc1K6DERuAuiXpSdUGkYecQrP5v"),  // vaultSigner
+)
+
+export const RAYDIUM_SLC_USDC_MARKET = new RaydiumMarket(
+  "SLC/USDC",
+  TokenID.SLC,
+  TokenID.USDC,
+  new PublicKey("84Sk8vke7cSvKeLuEv6Y59GUJi9dKZUQTc3nxnNqKaNS"),   // amm
+  new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
+  new PublicKey("GrsptRCTC9tUhpuqeLbb6EYyGkjoGvtcpAm34vKQG4d3"),  // openOrders
+  new PublicKey("3bjQpeq4ZnCo3VnPjib1UZdgkrRHUTkuVCPQAaPTj5wD"),   // targetOrders
+  new PublicKey("BTVMJ1D7zc4eCNNwLmJ8nVrADJK734AicBxrMqH33y1q"),  // vaultA
+  new PublicKey("2GQb6TfLkbZ8TmidVQycmJZpkZNYaHXs6uDhFTkBnFmE"),  // vaultB
+
+  new PublicKey("DvmDTjsdnN77q7SST7gngLydP1ASNNpUVi4cNfU95oCr"),  // market
+  new PublicKey("CWV58CaZXCkvaVMx2nRrx6K5CN3CafKDqYHu5HAmHJ7p"),  // bids
+  new PublicKey("GCHLTigMHNjCnoWwL6sAGqVLh3AWvqU8mgb2HUtcmadp"),   // asks
+  new PublicKey("EMbRLesmacYyj7a618abpTYnMCZrPpisJZL1G7FxTjNz"),  // events
+  new PublicKey("7HPWx59RQLAbEFYegMC1sepdTo86i9d5pg5c5yiXqPSC"),  // vaultA
+  new PublicKey("DeUNDMfX7G6kXaaK5ZsaCFBoSwuJDErqK8hJzz2pdhDk"),  // vaultB
+  new PublicKey("CaQ8qAjV44hExigiWGpiVEQM78zazMe1VNe1TKQF9cA5"),  // vaultSigner
+)
+
+export const RAYDIUM_WOOF_USDC_MARKET = new RaydiumMarket(
+  "WOOF/USDC",
+  TokenID.WOOF,
+  TokenID.USDC,
+  new PublicKey("EZRHhpvAP4zEX1wZtTQcf6NP4FLWjs9c6tMRBqfrXgFD"),   // amm
+  new PublicKey("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"),  // ammAuthority
+  new PublicKey("GBGxwY1eqBJcTVAjwFDpLGQGCv5eoQTciudT9ttFybqZ"),  // openOrders
+  new PublicKey("EdQNfUu9EAX6aT7ixLV9zYBRLhArCgrxPAQPr3CBdFK7"),   // targetOrders
+  new PublicKey("6LP3CwLwA7StkyMQ9NpKUqLS9ipMmUjPrKhQ8V9w1BoH"),  // vaultA
+  new PublicKey("6HXfUDRXJkywFYvrKVgZMhnhvfqiU8T9pVYhJzyHEcmS"),  // vaultB
+
+  new PublicKey("CwK9brJ43MR4BJz2dwnDM7EXCNyHhGqCJDrAdsEts8n5"),  // market
+  new PublicKey("D5S8oWsPjytRq6uXB9H7fHxzFTpcmvULwYbuhAeAKNu4"),  // bids
+  new PublicKey("3PZAPrwUkhTqjaB7sDHLEj669J6hQXzPFTrnv7tgcgZT"),   // asks
+  new PublicKey("4V7fTH8x6qYz4GyvEVbzq1yLoGcpoByo6nCrsiA1HUUv"),  // events
+  new PublicKey("2VcGBzs54DWCVtAQsw8fx1VVdrxEvX7bJz3AD4j8EBHX"),  // vaultA
+  new PublicKey("3rfTMxRqmtoVvVsZXnvf2ifpFweeKSWxuFkYtyQnN9KG"),  // vaultB
+  new PublicKey("BUwcHs7HSHMexNjrEuSaP3TY5xdqBo87384VmWMV9BQF"),  // vaultSigner
 )

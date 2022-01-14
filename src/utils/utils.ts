@@ -2,6 +2,10 @@ import { Connection, PublicKey, Commitment, AccountInfo } from "@solana/web3.js"
 import { nu64, struct, u8 } from 'buffer-layout'
 import { publicKey, u128, u64 } from '@project-serum/borsh'
 
+export async function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function getMultipleAccounts(
     connection: Connection,
     publicKeys: PublicKey[],
